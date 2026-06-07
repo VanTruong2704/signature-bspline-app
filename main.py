@@ -1,4 +1,6 @@
 import os
+import platform
+import ctypes
 import traceback
 import threading
 import tkinter as tk
@@ -8,8 +10,7 @@ from PIL import Image, ImageTk, ImageGrab
 from src.image_processing import extract_signature_strokes
 from src.bspline import reconstruct_bspline_curves
 from src.dat_writer import write_point_dat, write_bspline_dat
-from src.utils import ensure_output_dir, read_text_file
-
+from src.utils import ensure_output_dir, read_text_file, save_temp_image, cleanup_temp_dir
 
 APP_TITLE = "Tái tạo chữ ký bằng đường cong B-spline"
 
@@ -26,15 +27,39 @@ SUPPORTED_IMAGE_TYPES = [
 ]
 
 
+# Khắc phục lỗi mờ giao diện trên Windows
+def enable_high_dpi_awareness():
+    if platform.system() == "Windows":
+        try:
+            # Windows 10/11
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                # Các bản Windows cũ hơn
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+
 class SignatureBSplineApp(tk.Tk):
     def __init__(self):
         super().__init__()
+
+        # Dọn dẹp thư mục temp nếu có tàn dư từ lần chạy trước
+        cleanup_temp_dir(OUTPUT_DIR)
 
         self.title(APP_TITLE)
         self.geometry("1100x850")
         self.minsize(950, 720)
 
+        # Phóng to toàn màn hình ngay khi khởi chạy chương trình
+        try:
+            self.state('zoomed')
+        except Exception:
+            pass
+
         self.current_image_path = None
+        self.current_image_display_name = ""
         self.preview_image_tk = None
         self.is_processing = False
 
@@ -43,6 +68,12 @@ class SignatureBSplineApp(tk.Tk):
 
         self._setup_style()
         self._build_ui()
+        self._build_loading_overlay()
+
+    def destroy(self):
+        """Được gọi khi ứng dụng tắt, dùng để dọn dẹp thư mục temp."""
+        cleanup_temp_dir(OUTPUT_DIR)
+        super().destroy()
 
     # =========================================================
     # STYLE
@@ -53,105 +84,42 @@ class SignatureBSplineApp(tk.Tk):
         style = ttk.Style()
         style.theme_use("clam")
 
-        style.configure(
-            "Main.TFrame",
-            background="#f4f7fb"
-        )
+        style.configure("Main.TFrame", background="#f4f7fb")
+        style.configure("Card.TFrame", background="#ffffff", relief="flat", borderwidth=1)
+        style.configure("Title.TLabel", background="#f4f7fb", foreground="#172033", font=("Segoe UI", 22, "bold"))
+        style.configure("Subtitle.TLabel", background="#f4f7fb", foreground="#5d6b82", font=("Segoe UI", 10))
+        style.configure("CardTitle.TLabel", background="#ffffff", foreground="#172033", font=("Segoe UI", 12, "bold"))
+        style.configure("Normal.TLabel", background="#ffffff", foreground="#334155", font=("Segoe UI", 10))
+        style.configure("Muted.TLabel", background="#ffffff", foreground="#64748b", font=("Segoe UI", 9))
+        style.configure("Success.TLabel", background="#ffffff", foreground="#15803d", font=("Segoe UI", 10, "bold"))
+        style.configure("Error.TLabel", background="#ffffff", foreground="#dc2626", font=("Segoe UI", 10, "bold"))
 
-        style.configure(
-            "Card.TFrame",
-            background="#ffffff",
-            relief="flat",
-            borderwidth=1
-        )
-
-        style.configure(
-            "Title.TLabel",
-            background="#f4f7fb",
-            foreground="#172033",
-            font=("Segoe UI", 22, "bold")
-        )
-
-        style.configure(
-            "Subtitle.TLabel",
-            background="#f4f7fb",
-            foreground="#5d6b82",
-            font=("Segoe UI", 10)
-        )
-
-        style.configure(
-            "CardTitle.TLabel",
-            background="#ffffff",
-            foreground="#172033",
-            font=("Segoe UI", 12, "bold")
-        )
-
-        style.configure(
-            "Normal.TLabel",
-            background="#ffffff",
-            foreground="#334155",
-            font=("Segoe UI", 10)
-        )
-
-        style.configure(
-            "Muted.TLabel",
-            background="#ffffff",
-            foreground="#64748b",
-            font=("Segoe UI", 9)
-        )
-
-        style.configure(
-            "Success.TLabel",
-            background="#ffffff",
-            foreground="#15803d",
-            font=("Segoe UI", 10, "bold")
-        )
-
-        style.configure(
-            "Error.TLabel",
-            background="#ffffff",
-            foreground="#dc2626",
-            font=("Segoe UI", 10, "bold")
-        )
-
+        # Nút bấm chính - Đã được làm to lên (Tăng padding và font size)
         style.configure(
             "Primary.TButton",
-            font=("Segoe UI", 10, "bold"),
-            padding=(14, 8),
+            font=("Segoe UI", 11, "bold"),
+            padding=(20, 12),
             background="#2563eb",
             foreground="#ffffff"
         )
-
         style.map(
             "Primary.TButton",
-            background=[
-                ("active", "#1d4ed8"),
-                ("pressed", "#1e40af")
-            ],
-            foreground=[
-                ("active", "#ffffff"),
-                ("pressed", "#ffffff")
-            ]
+            background=[("active", "#1d4ed8"), ("pressed", "#1e40af")],
+            foreground=[("active", "#ffffff"), ("pressed", "#ffffff")]
         )
 
+        # Nút bấm phụ - Đã được làm to lên tương xứng
         style.configure(
             "Secondary.TButton",
-            font=("Segoe UI", 10, "bold"),
-            padding=(14, 8),
+            font=("Segoe UI", 11, "bold"),
+            padding=(20, 12),
             background="#e2e8f0",
             foreground="#1e293b"
         )
-
         style.map(
             "Secondary.TButton",
-            background=[
-                ("active", "#cbd5e1"),
-                ("pressed", "#94a3b8")
-            ],
-            foreground=[
-                ("active", "#1e293b"),
-                ("pressed", "#1e293b")
-            ]
+            background=[("active", "#cbd5e1"), ("pressed", "#94a3b8")],
+            foreground=[("active", "#1e293b"), ("pressed", "#1e293b")]
         )
 
         style.configure(
@@ -161,13 +129,9 @@ class SignatureBSplineApp(tk.Tk):
             background="#f1f5f9",
             foreground="#334155"
         )
-
         style.map(
             "Copy.TButton",
-            background=[
-                ("active", "#e2e8f0"),
-                ("pressed", "#cbd5e1")
-            ]
+            background=[("active", "#e2e8f0"), ("pressed", "#cbd5e1")]
         )
 
     # =========================================================
@@ -222,11 +186,7 @@ class SignatureBSplineApp(tk.Tk):
         header = ttk.Frame(parent, style="Main.TFrame")
         header.pack(fill="x")
 
-        title = ttk.Label(
-            header,
-            text="TÁI TẠO CHỮ KÝ BẰNG ĐƯỜNG CONG B-SPLINE",
-            style="Title.TLabel"
-        )
+        title = ttk.Label(header, text="TÁI TẠO CHỮ KÝ BẰNG ĐƯỜNG CONG B-SPLINE", style="Title.TLabel")
         title.pack(anchor="w")
 
         subtitle = ttk.Label(
@@ -244,25 +204,15 @@ class SignatureBSplineApp(tk.Tk):
         card.columnconfigure(1, weight=0)
         card.columnconfigure(2, weight=1)
 
-        upload_btn = ttk.Button(
-            card,
-            text="Upload ảnh chữ ký",
-            style="Primary.TButton",
-            command=self._choose_image
-        )
+        upload_btn = ttk.Button(card, text="Upload ảnh chữ ký", style="Primary.TButton", command=self._choose_image)
         upload_btn.grid(row=0, column=0, sticky="w")
 
-        paste_btn = ttk.Button(
-            card,
-            text="Dán ảnh từ clipboard",
-            style="Secondary.TButton",
-            command=self._paste_image_from_clipboard
-        )
+        paste_btn = ttk.Button(card, text="Dán ảnh từ clipboard", style="Secondary.TButton", command=self._paste_image_from_clipboard)
         paste_btn.grid(row=0, column=1, sticky="w", padx=(12, 0))
 
         hint = ttk.Label(
             card,
-            text="Hỗ trợ: PNG, JPG, JPEG, BMP. Ảnh dán sẽ được lưu tạm trong thư mục output.",
+            text="Hỗ trợ: PNG, JPG, JPEG, BMP. Ảnh dán sẽ được lưu tạm và tự xoá sau khi đóng App.",
             style="Muted.TLabel"
         )
         hint.grid(row=0, column=2, sticky="e", padx=(12, 0))
@@ -278,14 +228,9 @@ class SignatureBSplineApp(tk.Tk):
         title.grid(row=0, column=0, sticky="w")
 
         self.preview_canvas = tk.Canvas(
-            card,
-            bg="#f8fafc",
-            highlightthickness=1,
-            highlightbackground="#dbe3ef",
-            relief="flat"
+            card, bg="#f8fafc", highlightthickness=1, highlightbackground="#dbe3ef", relief="flat"
         )
         self.preview_canvas.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
-
         self.preview_canvas.bind("<Configure>", self._on_preview_resize)
 
         self._draw_preview_placeholder()
@@ -299,23 +244,22 @@ class SignatureBSplineApp(tk.Tk):
         title = ttk.Label(card, text="Trạng thái", style="CardTitle.TLabel")
         title.grid(row=0, column=0, sticky="w")
 
-        self.status_label = ttk.Label(
-            card,
-            text="Chưa chọn ảnh chữ ký.",
-            style="Normal.TLabel",
-            wraplength=380,
-            justify="left"
-        )
+        self.status_label = ttk.Label(card, text="Chưa chọn ảnh chữ ký.", style="Normal.TLabel", justify="left")
         self.status_label.grid(row=1, column=0, sticky="nw", pady=(12, 0))
 
-        self.path_label = ttk.Label(
-            card,
-            text="",
-            style="Muted.TLabel",
-            wraplength=380,
-            justify="left"
-        )
+        self.path_label = ttk.Label(card, text="", style="Muted.TLabel", justify="left")
         self.path_label.grid(row=2, column=0, sticky="nw", pady=(12, 0))
+
+        # Lắng nghe sự kiện thay đổi kích thước card để tự động dãn chữ động (Dynamic Wrap)
+        card.bind("<Configure>", self._on_status_card_resize)
+
+    def _on_status_card_resize(self, event):
+        # Tính toán lại chiều rộng bao text an toàn (trừ đi lề ngoài)
+        new_wrap = max(200, event.width - 40)
+        if hasattr(self, 'status_label') and self.status_label.winfo_exists():
+            self.status_label.configure(wraplength=new_wrap)
+        if hasattr(self, 'path_label') and self.path_label.winfo_exists():
+            self.path_label.configure(wraplength=new_wrap)
 
     def _build_file_card(self, parent, row, title, copy_command):
         card = ttk.Frame(parent, style="Card.TFrame", padding=16)
@@ -326,18 +270,12 @@ class SignatureBSplineApp(tk.Tk):
 
         header = ttk.Frame(card, style="Card.TFrame")
         header.grid(row=0, column=0, sticky="ew")
-
         header.columnconfigure(0, weight=1)
 
         label = ttk.Label(header, text=title, style="CardTitle.TLabel")
         label.grid(row=0, column=0, sticky="w")
 
-        copy_btn = ttk.Button(
-            header,
-            text="Copy",
-            style="Copy.TButton",
-            command=copy_command
-        )
+        copy_btn = ttk.Button(header, text="Copy", style="Copy.TButton", command=copy_command)
         copy_btn.grid(row=0, column=1, sticky="e")
 
         text_frame = ttk.Frame(card, style="Card.TFrame")
@@ -347,41 +285,53 @@ class SignatureBSplineApp(tk.Tk):
         text_frame.columnconfigure(0, weight=1)
 
         text_widget = tk.Text(
-            text_frame,
-            wrap="none",
-            font=("Consolas", 9),
-            bg="#f8fafc",
-            fg="#0f172a",
-            insertbackground="#0f172a",
-            relief="flat",
-            padx=10,
-            pady=10,
-            undo=False
+            text_frame, wrap="none", font=("Consolas", 9), bg="#f8fafc", fg="#0f172a",
+            insertbackground="#0f172a", relief="flat", padx=10, pady=10, undo=False
         )
         text_widget.grid(row=0, column=0, sticky="nsew")
 
-        y_scroll = ttk.Scrollbar(
-            text_frame,
-            orient="vertical",
-            command=text_widget.yview
-        )
+        y_scroll = ttk.Scrollbar(text_frame, orient="vertical", command=text_widget.yview)
         y_scroll.grid(row=0, column=1, sticky="ns")
 
-        x_scroll = ttk.Scrollbar(
-            text_frame,
-            orient="horizontal",
-            command=text_widget.xview
-        )
+        x_scroll = ttk.Scrollbar(text_frame, orient="horizontal", command=text_widget.xview)
         x_scroll.grid(row=1, column=0, sticky="ew")
 
-        text_widget.configure(
-            yscrollcommand=y_scroll.set,
-            xscrollcommand=x_scroll.set
-        )
-
+        text_widget.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
         self._set_text_content(text_widget, "Nội dung file sẽ hiển thị ở đây sau khi xử lý ảnh.")
 
         return text_widget
+
+    # =========================================================
+    # LOADING OVERLAY (Hiệu ứng xử lý)
+    # =========================================================
+    def _build_loading_overlay(self):
+        # Tạo một frame mờ ảo (xám nhạt) đè lên toàn bộ cửa sổ
+        self.overlay_frame = tk.Frame(self, bg="#cbd5e1", cursor="watch")
+        
+        # Hộp thoại thông báo nằm giữa màn hình
+        inner_box = tk.Frame(self.overlay_frame, bg="#ffffff", padx=40, pady=30, relief="solid", borderwidth=1)
+        inner_box.place(relx=0.5, rely=0.5, anchor="center")
+        
+        label_title = tk.Label(inner_box, text="Đang xử lý hình ảnh", font=("Segoe UI", 14, "bold"), bg="#ffffff", fg="#1e293b")
+        label_title.pack(pady=(0, 10))
+        
+        label_desc = tk.Label(inner_box, text="Quá trình này có thể mất vài phút. Vui lòng đợi...", font=("Segoe UI", 10), bg="#ffffff", fg="#64748b")
+        label_desc.pack(pady=(0, 20))
+        
+        # Thanh tiến trình xoay vô tận
+        self.progress_bar = ttk.Progressbar(inner_box, mode="indeterminate", length=300)
+        self.progress_bar.pack(fill="x")
+
+    def _show_loading(self):
+        # Đặt overlay bao phủ toàn bộ giao diện, chặn mọi thao tác click
+        self.overlay_frame.place(x=0, y=0, relwidth=1, relheight=1)
+        self.overlay_frame.lift()
+        self.progress_bar.start(10)
+        self.update_idletasks()
+
+    def _hide_loading(self):
+        self.progress_bar.stop()
+        self.overlay_frame.place_forget()
 
     # =========================================================
     # IMAGE INPUT
@@ -396,6 +346,7 @@ class SignatureBSplineApp(tk.Tk):
             return
 
         self.current_image_path = file_path
+        self.current_image_display_name = file_path
         self._load_preview_image(file_path)
         self._process_current_image()
 
@@ -404,88 +355,71 @@ class SignatureBSplineApp(tk.Tk):
             clipboard_data = ImageGrab.grabclipboard()
 
             if clipboard_data is None:
-                messagebox.showwarning(
-                    "Không có ảnh",
-                    "Clipboard hiện không có ảnh để dán."
-                )
+                messagebox.showwarning("Không có ảnh", "Clipboard hiện không có ảnh để dán.")
                 return
-
-            ensure_output_dir(OUTPUT_DIR)
 
             if isinstance(clipboard_data, Image.Image):
                 image = clipboard_data.convert("RGB")
-                temp_path = os.path.join(OUTPUT_DIR, "_clipboard_signature.png")
-                image.save(temp_path)
+                
+                # Lưu ảnh tạm vào ổ cứng để xử lý đúng logic
+                temp_path = save_temp_image(image, OUTPUT_DIR)
+                
                 self.current_image_path = temp_path
+                self.current_image_display_name = "Ảnh dán từ clipboard (Được lưu tạm để xử lý)"
 
             elif isinstance(clipboard_data, list):
                 image_path = self._find_first_image_path(clipboard_data)
-
                 if image_path is None:
-                    messagebox.showwarning(
-                        "Không có ảnh",
-                        "Clipboard có dữ liệu, nhưng không tìm thấy file ảnh hợp lệ."
-                    )
+                    messagebox.showwarning("Không có ảnh", "Clipboard có dữ liệu, nhưng không tìm thấy file ảnh hợp lệ.")
                     return
 
                 self.current_image_path = image_path
-
+                self.current_image_display_name = image_path
             else:
-                messagebox.showwarning(
-                    "Không hỗ trợ",
-                    "Dữ liệu trong clipboard không phải ảnh."
-                )
+                messagebox.showwarning("Không hỗ trợ", "Dữ liệu trong clipboard không phải ảnh.")
                 return
 
             self._load_preview_image(self.current_image_path)
             self._process_current_image()
 
         except Exception as e:
-            self._show_error(
-                "Lỗi khi dán ảnh từ clipboard.",
-                e
-            )
+            self._show_error("Lỗi khi dán ảnh từ clipboard.", e)
 
     def _find_first_image_path(self, file_paths):
         valid_extensions = (".png", ".jpg", ".jpeg", ".bmp")
-
         for path in file_paths:
             if isinstance(path, str) and path.lower().endswith(valid_extensions):
                 return path
-
         return None
 
     # =========================================================
     # PROCESSING
     # =========================================================
     def _process_current_image(self):
-        if not self.current_image_path:
+        if self.current_image_path is None:
             return
 
-        if self.is_processing:
-            messagebox.showinfo(
-                "Đang xử lý",
-                "Chương trình đang xử lý ảnh hiện tại. Bạn hãy đợi xử lý xong rồi chọn ảnh khác."
-            )
-            return
-
-        image_path = self.current_image_path
+        image_source = self.current_image_path
+        image_display_name = self.current_image_display_name or str(image_source)
+        
         self.is_processing = True
         self._set_status("Đang xử lý ảnh chữ ký...", status_type="normal")
-        self.update_idletasks()
+        
+        # Bật màn hình Loading/Khóa thao tác
+        self._show_loading()
 
         worker = threading.Thread(
             target=self._process_current_image_worker,
-            args=(image_path,),
+            args=(image_source, image_display_name),
             daemon=True
         )
         worker.start()
 
-    def _process_current_image_worker(self, image_path):
+    def _process_current_image_worker(self, image_source, image_display_name):
         try:
             ensure_output_dir(OUTPUT_DIR)
 
-            strokes = extract_signature_strokes(image_path)
+            strokes = extract_signature_strokes(image_source)
 
             if not strokes:
                 raise ValueError(
@@ -498,9 +432,7 @@ class SignatureBSplineApp(tk.Tk):
             curves = reconstruct_bspline_curves(strokes)
 
             if not curves:
-                raise ValueError(
-                    "Không tái tạo được đường cong B-spline từ tập điểm đã trích xuất."
-                )
+                raise ValueError("Không tái tạo được đường cong B-spline từ tập điểm đã trích xuất.")
 
             write_bspline_dat(curves, self.bspline_file_path)
 
@@ -508,7 +440,7 @@ class SignatureBSplineApp(tk.Tk):
             bspline_content = read_text_file(self.bspline_file_path)
 
             result = {
-                "image_path": image_path,
+                "image_path": image_display_name,
                 "point_content": point_content,
                 "bspline_content": bspline_content,
                 "total_points": sum(len(stroke) for stroke in strokes),
@@ -523,6 +455,7 @@ class SignatureBSplineApp(tk.Tk):
 
     def _finish_processing_success(self, result):
         self.is_processing = False
+        self._hide_loading() # Tắt Loading Overlay
 
         self._set_text_content(self.point_text, result["point_content"])
         self._set_text_content(self.bspline_text, result["bspline_content"])
@@ -545,25 +478,25 @@ class SignatureBSplineApp(tk.Tk):
 
     def _finish_processing_error(self, exception):
         self.is_processing = False
-        self._show_error(
-            "Lỗi trong quá trình xử lý ảnh chữ ký.",
-            exception
-        )
+        self._hide_loading() # Tắt Loading Overlay
+        
+        self._show_error("Lỗi trong quá trình xử lý ảnh chữ ký.", exception)
 
     # =========================================================
     # PREVIEW
     # =========================================================
-    def _load_preview_image(self, image_path):
+    def _load_preview_image(self, image_input):
         try:
-            image = Image.open(image_path).convert("RGB")
+            if isinstance(image_input, Image.Image):
+                image = image_input.convert("RGB")
+            else:
+                image = Image.open(image_input).convert("RGB")
+
             self.original_preview_image = image
             self._draw_preview_image()
 
         except Exception as e:
-            self._show_error(
-                "Không thể hiển thị ảnh đã chọn.",
-                e
-            )
+            self._show_error("Không thể hiển thị ảnh đã chọn.", e)
 
     def _on_preview_resize(self, event):
         if hasattr(self, "original_preview_image"):
@@ -581,11 +514,9 @@ class SignatureBSplineApp(tk.Tk):
             return
 
         self.preview_canvas.create_text(
-            width // 2,
-            height // 2,
+            width // 2, height // 2,
             text="Ảnh chữ ký sẽ hiển thị ở đây",
-            fill="#94a3b8",
-            font=("Segoe UI", 12, "bold")
+            fill="#94a3b8", font=("Segoe UI", 12, "bold")
         )
 
     def _draw_preview_image(self):
@@ -613,8 +544,7 @@ class SignatureBSplineApp(tk.Tk):
         y = canvas_height // 2
 
         self.preview_canvas.create_image(
-            x,
-            y,
+            x, y,
             image=self.preview_image_tk,
             anchor="center"
         )
@@ -649,18 +579,11 @@ class SignatureBSplineApp(tk.Tk):
         else:
             style = "Normal.TLabel"
 
-        self.status_label.configure(
-            text=message,
-            style=style
-        )
+        self.status_label.configure(text=message, style=style)
 
     def _show_error(self, user_message, exception):
         error_detail = str(exception)
-
-        self._set_status(
-            f"{user_message}\n\nChi tiết lỗi:\n{error_detail}",
-            status_type="error"
-        )
+        self._set_status(f"{user_message}\n\nChi tiết lỗi:\n{error_detail}", status_type="error")
 
         print("========== ERROR ==========")
         print(user_message)
@@ -670,6 +593,8 @@ class SignatureBSplineApp(tk.Tk):
 
 
 def main():
+    # Bật hiển thị DPI cao trước khi khởi tạo UI
+    enable_high_dpi_awareness()
     app = SignatureBSplineApp()
     app.mainloop()
 

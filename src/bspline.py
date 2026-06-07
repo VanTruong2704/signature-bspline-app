@@ -9,9 +9,9 @@ DEFAULT_DEGREE = 3
 DEFAULT_KNOT_TYPE = 1
 
 MIN_CONTROL_POINTS = 4
-MAX_CONTROL_POINTS = 95
+MAX_CONTROL_POINTS = 130
 
-CONTROL_POINT_RATIO = 0.24
+CONTROL_POINT_RATIO = 0.30
 
 
 # =========================================================
