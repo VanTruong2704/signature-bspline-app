@@ -27,15 +27,12 @@ SUPPORTED_IMAGE_TYPES = [
 ]
 
 
-# Khắc phục lỗi mờ giao diện trên Windows
 def enable_high_dpi_awareness():
     if platform.system() == "Windows":
         try:
-            # Windows 10/11
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             try:
-                # Các bản Windows cũ hơn
                 ctypes.windll.user32.SetProcessDPIAware()
             except Exception:
                 pass
@@ -45,14 +42,12 @@ class SignatureBSplineApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        # Dọn dẹp thư mục temp nếu có tàn dư từ lần chạy trước
         cleanup_temp_dir(OUTPUT_DIR)
 
         self.title(APP_TITLE)
         self.geometry("1100x850")
         self.minsize(950, 720)
 
-        # Phóng to toàn màn hình ngay khi khởi chạy chương trình
         try:
             self.state('zoomed')
         except Exception:
@@ -61,8 +56,6 @@ class SignatureBSplineApp(tk.Tk):
         self.current_image_path = None
         self.current_image_display_name = ""
         self.preview_image_tk = None
-        self.is_processing = False
-
         self.point_file_path = os.path.join(OUTPUT_DIR, POINT_FILE_NAME)
         self.bspline_file_path = os.path.join(OUTPUT_DIR, BSPLINE_FILE_NAME)
 
@@ -71,13 +64,9 @@ class SignatureBSplineApp(tk.Tk):
         self._build_loading_overlay()
 
     def destroy(self):
-        """Được gọi khi ứng dụng tắt, dùng để dọn dẹp thư mục temp."""
         cleanup_temp_dir(OUTPUT_DIR)
         super().destroy()
 
-    # =========================================================
-    # STYLE
-    # =========================================================
     def _setup_style(self):
         self.configure(bg="#f4f7fb")
 
@@ -94,7 +83,6 @@ class SignatureBSplineApp(tk.Tk):
         style.configure("Success.TLabel", background="#ffffff", foreground="#15803d", font=("Segoe UI", 10, "bold"))
         style.configure("Error.TLabel", background="#ffffff", foreground="#dc2626", font=("Segoe UI", 10, "bold"))
 
-        # Nút bấm chính - Đã được làm to lên (Tăng padding và font size)
         style.configure(
             "Primary.TButton",
             font=("Segoe UI", 11, "bold"),
@@ -108,7 +96,6 @@ class SignatureBSplineApp(tk.Tk):
             foreground=[("active", "#ffffff"), ("pressed", "#ffffff")]
         )
 
-        # Nút bấm phụ - Đã được làm to lên tương xứng
         style.configure(
             "Secondary.TButton",
             font=("Segoe UI", 11, "bold"),
@@ -134,9 +121,6 @@ class SignatureBSplineApp(tk.Tk):
             background=[("active", "#e2e8f0"), ("pressed", "#cbd5e1")]
         )
 
-    # =========================================================
-    # UI
-    # =========================================================
     def _build_ui(self):
         root = ttk.Frame(self, style="Main.TFrame", padding=22)
         root.pack(fill="both", expand=True)
@@ -250,11 +234,9 @@ class SignatureBSplineApp(tk.Tk):
         self.path_label = ttk.Label(card, text="", style="Muted.TLabel", justify="left")
         self.path_label.grid(row=2, column=0, sticky="nw", pady=(12, 0))
 
-        # Lắng nghe sự kiện thay đổi kích thước card để tự động dãn chữ động (Dynamic Wrap)
         card.bind("<Configure>", self._on_status_card_resize)
 
     def _on_status_card_resize(self, event):
-        # Tính toán lại chiều rộng bao text an toàn (trừ đi lề ngoài)
         new_wrap = max(200, event.width - 40)
         if hasattr(self, 'status_label') and self.status_label.winfo_exists():
             self.status_label.configure(wraplength=new_wrap)
@@ -301,14 +283,9 @@ class SignatureBSplineApp(tk.Tk):
 
         return text_widget
 
-    # =========================================================
-    # LOADING OVERLAY (Hiệu ứng xử lý)
-    # =========================================================
     def _build_loading_overlay(self):
-        # Tạo một frame mờ ảo (xám nhạt) đè lên toàn bộ cửa sổ
         self.overlay_frame = tk.Frame(self, bg="#cbd5e1", cursor="watch")
-        
-        # Hộp thoại thông báo nằm giữa màn hình
+
         inner_box = tk.Frame(self.overlay_frame, bg="#ffffff", padx=40, pady=30, relief="solid", borderwidth=1)
         inner_box.place(relx=0.5, rely=0.5, anchor="center")
         
@@ -318,12 +295,10 @@ class SignatureBSplineApp(tk.Tk):
         label_desc = tk.Label(inner_box, text="Quá trình này có thể mất vài phút. Vui lòng đợi...", font=("Segoe UI", 10), bg="#ffffff", fg="#64748b")
         label_desc.pack(pady=(0, 20))
         
-        # Thanh tiến trình xoay vô tận
         self.progress_bar = ttk.Progressbar(inner_box, mode="indeterminate", length=300)
         self.progress_bar.pack(fill="x")
 
     def _show_loading(self):
-        # Đặt overlay bao phủ toàn bộ giao diện, chặn mọi thao tác click
         self.overlay_frame.place(x=0, y=0, relwidth=1, relheight=1)
         self.overlay_frame.lift()
         self.progress_bar.start(10)
@@ -333,9 +308,6 @@ class SignatureBSplineApp(tk.Tk):
         self.progress_bar.stop()
         self.overlay_frame.place_forget()
 
-    # =========================================================
-    # IMAGE INPUT
-    # =========================================================
     def _choose_image(self):
         file_path = filedialog.askopenfilename(
             title="Chọn ảnh chữ ký",
@@ -361,7 +333,6 @@ class SignatureBSplineApp(tk.Tk):
             if isinstance(clipboard_data, Image.Image):
                 image = clipboard_data.convert("RGB")
                 
-                # Lưu ảnh tạm vào ổ cứng để xử lý đúng logic
                 temp_path = save_temp_image(image, OUTPUT_DIR)
                 
                 self.current_image_path = temp_path
@@ -387,14 +358,11 @@ class SignatureBSplineApp(tk.Tk):
 
     def _find_first_image_path(self, file_paths):
         valid_extensions = (".png", ".jpg", ".jpeg", ".bmp")
-        for path in file_paths:
-            if isinstance(path, str) and path.lower().endswith(valid_extensions):
-                return path
-        return None
+        return next((
+            path for path in file_paths
+            if isinstance(path, str) and path.lower().endswith(valid_extensions)
+        ), None)
 
-    # =========================================================
-    # PROCESSING
-    # =========================================================
     def _process_current_image(self):
         if self.current_image_path is None:
             return
@@ -402,10 +370,8 @@ class SignatureBSplineApp(tk.Tk):
         image_source = self.current_image_path
         image_display_name = self.current_image_display_name or str(image_source)
         
-        self.is_processing = True
         self._set_status("Đang xử lý ảnh chữ ký...", status_type="normal")
-        
-        # Bật màn hình Loading/Khóa thao tác
+
         self._show_loading()
 
         worker = threading.Thread(
@@ -454,8 +420,7 @@ class SignatureBSplineApp(tk.Tk):
             self.after(0, lambda error=e: self._finish_processing_error(error))
 
     def _finish_processing_success(self, result):
-        self.is_processing = False
-        self._hide_loading() # Tắt Loading Overlay
+        self._hide_loading()
 
         self._set_text_content(self.point_text, result["point_content"])
         self._set_text_content(self.bspline_text, result["bspline_content"])
@@ -477,14 +442,10 @@ class SignatureBSplineApp(tk.Tk):
         )
 
     def _finish_processing_error(self, exception):
-        self.is_processing = False
-        self._hide_loading() # Tắt Loading Overlay
+        self._hide_loading()
         
         self._show_error("Lỗi trong quá trình xử lý ảnh chữ ký.", exception)
 
-    # =========================================================
-    # PREVIEW
-    # =========================================================
     def _load_preview_image(self, image_input):
         try:
             if isinstance(image_input, Image.Image):
@@ -549,9 +510,6 @@ class SignatureBSplineApp(tk.Tk):
             anchor="center"
         )
 
-    # =========================================================
-    # TEXT / COPY / STATUS
-    # =========================================================
     def _set_text_content(self, text_widget, content):
         text_widget.configure(state="normal")
         text_widget.delete("1.0", "end")
@@ -572,13 +530,10 @@ class SignatureBSplineApp(tk.Tk):
         messagebox.showinfo("Copy", "Đã copy nội dung vào clipboard.")
 
     def _set_status(self, message, status_type="normal"):
-        if status_type == "success":
-            style = "Success.TLabel"
-        elif status_type == "error":
-            style = "Error.TLabel"
-        else:
-            style = "Normal.TLabel"
-
+        style = {
+            "success": "Success.TLabel",
+            "error": "Error.TLabel",
+        }.get(status_type, "Normal.TLabel")
         self.status_label.configure(text=message, style=style)
 
     def _show_error(self, user_message, exception):
@@ -593,7 +548,6 @@ class SignatureBSplineApp(tk.Tk):
 
 
 def main():
-    # Bật hiển thị DPI cao trước khi khởi tạo UI
     enable_high_dpi_awareness()
     app = SignatureBSplineApp()
     app.mainloop()

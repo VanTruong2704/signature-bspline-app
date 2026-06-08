@@ -8,8 +8,6 @@ import math
 
 DEFAULT_MAX_IMAGE_SIZE = 950
 DEFAULT_MIN_WORK_IMAGE_SIZE = 550      # Kích thước tối thiểu để thuật toán hoạt động tốt
-DEFAULT_MAX_UPSCALE_FACTOR = 1.35
-
 # Xoá viền vật lý an toàn
 BORDER_CLEAR_PADDING = 15
 FOREGROUND_CROP_PADDING = 28
@@ -114,10 +112,6 @@ def _read_image(image_path):
 
 
 def _resize_image_keep_ratio(image, max_size, min_size=550):
-    """
-    Giữ nguyên tỷ lệ ảnh. Thu nhỏ nếu ảnh quá khổng lồ và tự động phóng to 
-    nếu ảnh có độ phân giải quá thấp để bảo vệ nét chữ không bị bộ lọc xóa mất.
-    """
     h, w = image.shape[:2]
     current_max = max(h, w)
 
@@ -141,10 +135,6 @@ def _to_gray(image):
 
 
 def _binarize_image(gray_image):
-    """
-    Thuật toán toán học nâng cao: Khử nền cục bộ (Local Background Subtraction).
-    Giải quyết triệt để trường hợp mực màu xanh/đỏ, nền giấy xiên góc, giấy tối màu hoặc bị đổ bóng.
-    """
     # Bước A: Làm mịn nhẹ để giảm độ nhiễu hạt của thớ giấy tự nhiên
     blurred = cv2.GaussianBlur(gray_image, (3, 3), 0)
     
@@ -177,7 +167,7 @@ def _heal_cracks(binary):
 
 
 def _clean_binary_image(binary, min_area):
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     cleaned = np.zeros_like(binary)
     for i in range(1, num_labels):
         if stats[i, cv2.CC_STAT_AREA] >= min_area:
